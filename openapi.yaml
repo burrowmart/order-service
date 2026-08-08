@@ -1,0 +1,98 @@
+openapi: 3.0.0
+paths:
+  /health:
+    get:
+      operationId: HealthController_check
+      parameters: []
+      responses:
+        '200':
+          description: ''
+      tags:
+        - health
+  /orders:
+    post:
+      operationId: OrdersController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderDto'
+      responses:
+        '201':
+          description: Order created as PENDING
+      tags:
+        - orders
+    get:
+      operationId: OrdersController_findAllByUserEmail
+      parameters:
+        - name: userEmail
+          required: true
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated orders for a user
+      tags:
+        - orders
+  /orders/{id}:
+    get:
+      operationId: OrdersController_findOne
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Order found
+        '404':
+          description: Order not found
+      tags:
+        - orders
+info:
+  title: Order Service API
+  description: >-
+    Manages orders and hosts the order-placement saga orchestrator seam. An order transitions PENDING -> CONFIRMED or
+    PENDING -> CANCELLED.
+  version: 0.1.0
+  contact: {}
+tags: []
+servers: []
+components:
+  schemas:
+    CreateOrderItemDto:
+      type: object
+      properties:
+        sku:
+          type: string
+          example: WIDGET-1
+        qty:
+          type: number
+          example: 2
+          minimum: 1
+        price:
+          type: number
+          example: 9.99
+          description: Unit price captured at order time
+      required:
+        - sku
+        - qty
+        - price
+    CreateOrderDto:
+      type: object
+      properties:
+        userEmail:
+          type: string
+          example: alice@example.com
+          description: User email — primary key from user-service
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreateOrderItemDto'
+      required:
+        - userEmail
+        - items
