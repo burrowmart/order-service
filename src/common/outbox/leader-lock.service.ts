@@ -2,11 +2,16 @@ import { Inject, Injectable, Logger, OnApplicationShutdown } from '@nestjs/commo
 import Redis from 'ioredis';
 import { randomUUID } from 'crypto';
 import { OUTBOX_REDIS_CLIENT } from './outbox.tokens';
+import { SERVICE_NAME } from '../../constants';
 
 @Injectable()
 export class LeaderLockService implements OnApplicationShutdown {
   private readonly logger = new Logger(LeaderLockService.name);
-  private readonly lockKey = 'outbox:leader-lock';
+  // Must be namespaced per service — this Redis instance is shared platform-wide
+  // (one Redis, multiple roles, per ARCHITECTURE.md), so a bare 'outbox:leader-lock'
+  // key would elect a single leader *across all services*, leaving every other
+  // service's outbox publisher permanently in standby and never publishing.
+  private readonly lockKey = `outbox:leader-lock:${SERVICE_NAME}`;
   /** Lock TTL must be longer than renewEveryMs to survive a slow renewal tick. */
   private readonly ttlMs = 15_000;
   private readonly renewEveryMs = 5_000;
@@ -49,6 +54,17 @@ export class LeaderLockService implements OnApplicationShutdown {
     )) as number;
 
     if (ok === 0) {
+      // GET didn't match our value — either a delayed renewal tick let the
+      // key expire (nobody else has claimed it yet) or another replica
+      // genuinely holds it now. Try a plain SET NX first: if the key is
+      // simply gone, this silently reclaims leadership instead of
+      // permanently disabling this process's outbox publisher over a
+      // transient miss. Only concede if something else already grabbed it.
+      const reclaimed = await this.redis.set(this.lockKey, this.lockValue, 'PX', this.ttlMs, 'NX');
+      if (reclaimed === 'OK') {
+        this.logger.warn('Leader lock briefly expired — reclaimed before any other replica took it');
+        return;
+      }
       this.logger.warn('Leader lock lost — stopping outbox publisher');
       clearInterval(this.renewTimer);
       this.lostCallbacks.forEach((cb) => cb());

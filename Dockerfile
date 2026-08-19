@@ -9,6 +9,8 @@ COPY contracts/package*.json contracts/
 RUN cd contracts && npm install --ignore-scripts
 
 COPY contracts/src contracts/src
+COPY contracts/scripts contracts/scripts
+COPY contracts/openapi contracts/openapi
 COPY contracts/tsconfig*.json contracts/
 RUN cd contracts && npm run build
 
@@ -33,6 +35,13 @@ WORKDIR /app
 COPY --from=build --chown=appuser:appgroup /workspace/order-service/dist        ./dist
 COPY --from=build --chown=appuser:appgroup /workspace/order-service/node_modules ./node_modules
 COPY --from=build --chown=appuser:appgroup /workspace/order-service/package.json ./
+
+# npm resolved the @demo/contracts `file:` dependency to a symlink pointing at
+# the build stage's /workspace/contracts, which isn't part of this stage —
+# replace it with the actual built package so the runtime require() resolves.
+RUN rm -f node_modules/@demo/contracts
+COPY --from=build --chown=appuser:appgroup /workspace/contracts/dist ./node_modules/@demo/contracts/dist
+COPY --from=build --chown=appuser:appgroup /workspace/contracts/package.json ./node_modules/@demo/contracts/package.json
 
 USER appuser
 

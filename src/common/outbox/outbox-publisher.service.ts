@@ -27,6 +27,10 @@ export class OutboxPublisherService
   // amqplib.connect returns ChannelModel, not the low-level Connection interface
   private amqpConn?: amqplib.ChannelModel;
   private amqpCh?: amqplib.ConfirmChannel;
+  private standbyRetryTimer?: NodeJS.Timeout;
+  /** How often a standby replica retries becoming leader (e.g. after a dying
+   * leader's not-yet-expired Redis lock kept the very first acquire() out). */
+  private readonly standbyRetryMs = 5_000;
 
   /**
    * Test-only hook: called immediately before the AMQP publish for each row.
@@ -52,12 +56,41 @@ export class OutboxPublisherService
 
     const acquired = await this.leaderLock.acquire();
     if (!acquired) {
-      this.logger.log('Standby replica — outbox publisher inactive');
+      // A single failed attempt here doesn't necessarily mean another replica
+      // is durably leading — it commonly means the previous leader (e.g. this
+      // same replica across a restart) hasn't hit its lock TTL yet. Without a
+      // retry loop this would strand the service in standby forever, since
+      // nothing else ever calls acquire() again.
+      this.logger.log('Standby replica — retrying leader election');
+      this.scheduleStandbyRetry();
       return;
     }
 
+    await this.becomeLeader();
+  }
+
+  private scheduleStandbyRetry(): void {
+    clearTimeout(this.standbyRetryTimer);
+    this.standbyRetryTimer = setTimeout(() => {
+      void (async () => {
+        const acquired = await this.leaderLock.acquire();
+        if (acquired) {
+          await this.becomeLeader();
+        } else {
+          this.scheduleStandbyRetry();
+        }
+      })();
+    }, this.standbyRetryMs);
+  }
+
+  private async becomeLeader(): Promise<void> {
+    clearTimeout(this.standbyRetryTimer);
     // If we lose the lock mid-flight (e.g. Redis partition) stop the stream
-    this.leaderLock.onLockLost(() => { void this.stop(); });
+    // and go back to retrying election rather than staying dark permanently.
+    this.leaderLock.onLockLost(() => {
+      void this.stop();
+      this.scheduleStandbyRetry();
+    });
 
     await this.connectAmqp();
     await this.start();
@@ -176,6 +209,13 @@ export class OutboxPublisherService
           correlationId: doc.envelope.correlationId,
           contentType: 'application/json',
           persistent: true,
+          // Re-attach the trace context captured when this row was written
+          // (OutboxService.writeInTx, see OutboxEntity.traceparent's doc
+          // comment) -- this publish runs from a MongoDB change-stream
+          // callback with no span of its own, so without this header the
+          // consuming service's amqplib auto-instrumentation has nothing to
+          // extract and the RabbitMQ hop drops out of the request's trace.
+          headers: doc.traceparent ? { traceparent: doc.traceparent } : undefined,
         },
         (err) => (err ? reject(err) : resolve()),
       ),
@@ -215,6 +255,7 @@ export class OutboxPublisherService
   }
 
   async onApplicationShutdown(): Promise<void> {
+    clearTimeout(this.standbyRetryTimer);
     await this.stop();
     try {
       await this.amqpCh?.close();

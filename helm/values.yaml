@@ -38,9 +38,13 @@ base-service:
       LOG_LEVEL: info
       PORT: "3000"
       RABBITMQ_QUEUE: order-service.queue
-      # OpenTelemetry — traces exported to the in-cluster collector
+      # OpenTelemetry — traces exported to the in-cluster collector.
+      # Port 4317 (gRPC), not 4318 (HTTP/protobuf): tracing.ts instantiates
+      # OTLPTraceExporter from @opentelemetry/exporter-trace-otlp-grpc, which
+      # always speaks gRPC on whatever endpoint it is given -- pointing it at
+      # the HTTP receiver port silently drops every span.
       OTEL_SERVICE_NAME: order-service
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4318"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"
       # Cognito region is non-sensitive; pool/client IDs come from Secrets Manager
       COGNITO_REGION: us-east-1
       # OPAL server for attribute push; order-service pushes order attributes after writes

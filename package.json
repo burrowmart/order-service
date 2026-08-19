@@ -10,6 +10,7 @@
     "test": "jest --passWithNoTests",
     "test:e2e": "jest --config test/jest-e2e.json --forceExit --runInBand",
     "test:outbox": "jest --config test/jest-outbox.json --forceExit --runInBand",
+    "test:orchestrator": "jest --config test/jest-orchestrator.json --forceExit --runInBand",
     "generate:openapi": "ts-node -r tsconfig-paths/register scripts/generate-openapi.ts",
     "lint": "eslint \"{src,test}/**/*.ts\""
   },
