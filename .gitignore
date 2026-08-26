@@ -8,3 +8,7 @@ node_modules/
 # (nest build emits to dist/ only — these appear if tsc is run directly)
 jest.config.js
 jest.config.d.ts
+
+# Helm dependency build artifact — resolved by `helm dependency update`
+# in CI, or platform-infra/scripts/vendor-base-chart.sh locally.
+helm/charts/
